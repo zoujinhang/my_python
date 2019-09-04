@@ -9,6 +9,12 @@ import os
 import matplotlib.pyplot as plt
 from scipy.integrate import quad
 from scipy.optimize import curve_fit
+import pymultinest
+import json
+from zjh_plotmarginalmodes import PlotMarginalModes
+
+from scipy.sparse import csc_matrix,eye,diags
+from scipy.sparse.linalg import spsolve
 
 robjects.r("library(baseline)")
 robjects.numpy2ri.activate()
@@ -138,9 +144,49 @@ def r_baseline(time,rate,lam = None,hwi = None,it = None,inti = None):
 	r("rbase = baseline(y,lam ="+str(lam)+",hwi = "+str(hwi)+",it = "+str(it)+",int = "+fillpeak_int+",method = 'fillPeaks')")
 	r("bs = getBaseline(rbase)")
 	r("cs = getCorrected(rbase)")
-	bs = np.float32(r('bs')[0])
-	cs = np.float32(r('cs')[0])
+	bs = np.float32(r('bs'))[0]
+	cs = np.float32(r('cs'))[0]
 	return time,cs,bs
+
+def WhittakerSmooth(x,w,lambda_):
+	X=np.matrix(x)#这里将数组转化为矩阵。矩阵之后就不可以用索引进行引用了。
+	m=X.size
+	i=np.arange(0,m)
+	E=eye(m,format='csc')
+	D=E[1:]-E[:-1] # numpy.diff() does not work with sparse matrix. This is a workaround.
+	W=diags(w,0,shape=(m,m))
+	A=csc_matrix(W+(lambda_*D.T*D))
+	B=csc_matrix(W*X.T)
+	background=spsolve(A,B)
+	return np.array(background)
+
+def my_airPLS(x,wind = 0.1,itermax =50,lambda_ = 100):
+	wind_ = 1-wind
+	n = x.size
+	m = x.shape[0]
+	w = np.ones(m)
+	z = WhittakerSmooth(x, w, lambda_)
+	d = np.abs(x - z)
+	for i in range(itermax):
+		z0 = z
+		index_ = np.argsort(d)[int(n*wind_):]
+		w[index_] = 0
+		z = WhittakerSmooth(x, w, lambda_+20*i)
+		d = np.abs(z0 - z)
+		xx = np.sum((z-z0)**2/d.size)
+
+		if (xx<0.00001):
+			break
+	w = np.ones(m)
+	z = WhittakerSmooth(z, w, 200)
+	return z
+
+def baseline(x,y,wind = 0.1,itermax = 50,lambda_ = 100):
+	x = np.array(x)
+	y = np.array(y)
+	z = my_airPLS(y,wind = wind,itermax = itermax,lambda_ = lambda_)
+	return x,y-z,z
+
 
 def easy_histogram(time,binsize = 1.):
 
@@ -188,14 +234,14 @@ def get_lag(x1,x2,dt,x1_err = None,x2_err = None,num = 1000,order = 12,name = No
 	n = len(x1)
 	lag_t = np.arange(-n+1,n,1)*dt
 	nccf = np.correlate(x1/x1.max(),x2/x2.max(),'full')
-	lag_ever = get_peak(lag_t,nccf,order=order)
+	lag_detect = get_peak(lag_t,nccf,order=order)
 	print('--------------------------------------------------')
 
 	lag_list = []
 	if((name is not None)and(savedir is not None)):
 		print('We plot the check picture in '+savedir)
 		print('The name is ' + name+'.png')
-		index_array = np.where((lag_t >= lag_ever-7)&(lag_t<=lag_ever+7))
+		index_array = np.where((lag_t >= lag_detect-7)&(lag_t<=lag_detect+7))
 		fit_nccf = nccf[index_array]
 		fit_lag_t = lag_t[index_array]
 		new_t = np.linspace(fit_lag_t[0],fit_lag_t[-1],1000)
@@ -218,11 +264,15 @@ def get_lag(x1,x2,dt,x1_err = None,x2_err = None,num = 1000,order = 12,name = No
 		print('Monte Carlo Lag '+str(i)+' :',lag,end='\r')
 
 	lag_array = np.array(lag_list)
-	lag_err = lag_array.std()
-	print('The measured lag:', lag_ever)
-	print('The lag error', lag_err)
+	lag_sigma = lag_array.std()
+	lag_ave = lag_array.mean()
+	dx = lag_ave-lag_detect
+	lag_errl = lag_sigma-dx
+	lag_errh = lag_sigma+dx
+	print('The measured lag:', lag_detect)
+	print('The lag error', lag_errl,lag_errh)
 	print('--------------------------------------------------')
-	return lag_ever,lag_err
+	return lag_detect,lag_errl,lag_errh
 
 
 def check_rate(rate,standard = 10):
@@ -238,7 +288,7 @@ def check_rate(rate,standard = 10):
 			check = 0
 	return True
 
-def get_pulse_duration(t,edges = None,cafe_time = 0,r = 3,savedir = None,lam = None,hwi = int(20/0.02),gamma = None,p0 = 0.005):
+def get_pulse_duration(t,edges = None,cafe_time = 0,r = 3,b_t = 30,dt = 0.02,savedir = None,lam = None,hwi = int(20/0.02),gamma = None,p0 = 0.001):
 	'''
 	:param t: data time of point
 	:param edges: [time_start,time_stop]
@@ -247,15 +297,15 @@ def get_pulse_duration(t,edges = None,cafe_time = 0,r = 3,savedir = None,lam = N
 	:return: start_edges,stop_edges
 	'''
 	if(edges is not None):
-		bins = np.arange(edges[0],edges[-1]+0.02,0.02)
+		bins = np.arange(edges[0],edges[-1]+dt,dt)
 		bin_n,bin_edges = np.histogram(t,bins=bins)
 		t_h = (bin_edges[1:]+bin_edges[:-1])/2
 		rate = bin_n
 	else:
-		t_h,rate = easy_histogram(t,binsize = 0.02)
+		t_h,rate = easy_histogram(t,binsize = dt)
 		index = np.where((t_h>t_h[0]+5)&(t_h<t_h[-1]-5))
 		t_h = t_h[index]
-		rate = rate[index]*0.02
+		rate = rate[index]*dt
 	start_edges = []
 	stop_edges = []
 	if(check_rate(rate) == False):
@@ -311,6 +361,7 @@ def get_pulse_duration(t,edges = None,cafe_time = 0,r = 3,savedir = None,lam = N
 		hight_big3 = sort_bin_hight[-3:]
 		#hight_sigma_big3 = sort_bin_hight_sigma[-3:]
 		eva_hight = (bin_big3*hight_big3).sum()/bin_big3.sum()
+		#eva_hight = bs_ev
 		#eva_hight_sigma = (hight_sigma_big3*bin_big3).sum()/bin_big3.sum()
 		print('step 2 ....')
 		if (savedir is not None):
@@ -386,7 +437,7 @@ def get_pulse_duration(t,edges = None,cafe_time = 0,r = 3,savedir = None,lam = N
 		binstart3 = [binstart1[0]]
 		binstop3 = []
 		for index1,tr in enumerate(trait1):
-			if((binsize1[index1]<=30)and(bin_high1[index1]>=eva_hight+r)):
+			if((binsize1[index1]<=b_t)and(bin_high1[index1]>=eva_hight+r)):
 				binstart3.append(binstart1[index1])
 				binstop3.append(binstop1[index1])
 		binstop3.append(binstop1[-1])
@@ -604,8 +655,6 @@ def fit_lags_isotropic(e,lag,lag_err,n,E0,z,num = 5000):
 	return c
 
 
-
-
 def gbm_lag_analysis(ni_time,ni_energy,bgo_time,bgo_energy,window = None,time_edges = None,dt = 0.1,nai_energy_edges = None,bgo_energy_edges = None,savedir = None):
 	if(nai_energy_edges is None):
 		nai_energy_edges = np.array([8,10,12,16,21,26,34,43,55,70,90,115,146,186,238,303,386,492,627,800])
@@ -639,7 +688,8 @@ def gbm_lag_analysis(ni_time,ni_energy,bgo_time,bgo_energy,window = None,time_ed
 
 
 	lag = []
-	lag_err = []
+	lag_err_l = []
+	lag_err_h = []
 	egy = []
 	for i in range(1,n1):
 
@@ -649,17 +699,19 @@ def gbm_lag_analysis(ni_time,ni_energy,bgo_time,bgo_energy,window = None,time_ed
 		bin_t = (bin_edges[1:]+bin_edges[-1])/2.
 		bin_err = np.sqrt(bin_n)
 		t_b,cs,bs = r_baseline(bin_t,bin_n)
-		lag_,err_ = get_lag(cs_a[wind_index],cs[wind_index],dt,x1_err=bin_err_a[wind_index],x2_err=bin_err[wind_index],name= 'n'+str(i),savedir=savedir)
+		lag_,err_l,err_h = get_lag(cs_a[wind_index],cs[wind_index],dt,x1_err=bin_err_a[wind_index],x2_err=bin_err[wind_index],name= 'n'+str(i),savedir=savedir)
 
 		lag.append(lag_)
-		lag_err.append(err_)
+		lag_err_l.append(err_l)
+		lag_err_h.append(err_h)
 		eg = np.sqrt(nai_energy_edges[i+1]*nai_energy_edges[i])
 		egy.append(eg)
 
 	cs_a = cs
 	bin_err_a = bin_err
 	lag_a = lag_
-	err_a = err_
+	err_a_l = err_l
+	err_a_h = err_h
 	for i in range(n2):
 
 		e_index = np.where((bgo_energy>=bgo_energy_edges[i])&(bgo_energy<=bgo_energy_edges[i+1]))
@@ -668,15 +720,138 @@ def gbm_lag_analysis(ni_time,ni_energy,bgo_time,bgo_energy,window = None,time_ed
 		bin_t = (bin_edges[1:]+bin_edges[-1])/2.
 		bin_err = np.sqrt(bin_n)
 		t_b,cs,bs = r_baseline(bin_t,bin_n)
-		lag_, err_ = get_lag(cs_a[wind_index], cs[wind_index],dt, bin_err_a[wind_index] , bin_err[wind_index], name= 'b'+str(i),savedir=savedir)
+		lag_, err_l,err_h = get_lag(cs_a[wind_index], cs[wind_index],dt, bin_err_a[wind_index] , bin_err[wind_index], name= 'b'+str(i),savedir=savedir)
 		lag.append(lag_+ lag_a)
-		lag_err.append(err_+err_a)
+		lag_err_l.append(err_l+err_a_l)
+		lag_err_h.append(err_h+err_a_h)
 		eg = np.sqrt(bgo_energy_edges[i+1]*bgo_energy_edges[i])
 		egy.append(eg)
 	c = {}
-	c['lag'] = [np.array(egy),np.array(lag),np.array(lag_err)]
+	c['lag'] = [np.array(egy),np.array(lag),np.array(lag_err_l),np.array(lag_err_h)]
 	c['E0'] = E0
 	return c
+
+def my_curvfit(function,prior,parameters,x,y,yerr1,yerr2 = None,savedir =None,done = True):
+
+	n_params = len(parameters)
+	if yerr2 is not None:
+		yerr2 = np.abs(yerr2)
+	x = np.array(x)
+	y = np.array(y)
+	yerr1 = np.abs(yerr1)
+
+	if savedir is None:
+		savedir = '/home/laojin/software/my_python/curvfit/'
+		if os.path.exists(savedir) == False :
+			os.makedirs(savedir)
+	else:
+		if os.path.exists(savedir) == False :
+			os.makedirs(savedir)
+
+	def loglike(cube,ndim,nparams):
+
+		ymodel = function(x,cube)
+		if yerr2 is not None :
+			err = []
+			for index,value in enumerate(ymodel - y):
+				if value > 0:
+					err.append(yerr2[index])
+				else:
+					err.append(yerr1[index])
+			err = np.array(err)
+		else:
+			err = yerr1
+
+		loglikelihood = (-0.5*((ymodel-y)/err)**2).sum()
+		return loglikelihood
+	if((os.path.exists(savedir+'spectrum_params.json')==False)or(done)):
+		pymultinest.run(loglike,prior,n_params,outputfiles_basename=savedir+'spectrum_',resume=False,verbose=True)
+		json.dump(parameters, open(savedir+ 'spectrum_params.json', 'w'))
+	a = pymultinest.Analyzer(outputfiles_basename=savedir + 'spectrum0_', n_params = n_params)
+	return a
+
+
+def my_curvfit_plot(function,parameters,a,x,y,yerrl,yerrh = None,new_x = None,savedir = None,
+		    plot_weight = False,xlog = False,ylog = False,xlim = None,
+		    ylim = None,xlabel = None,ylabel = None):
+
+	n_params = len(parameters)
+	x = np.array(x)
+	y = np.array[y]
+	if yerrh is None:
+		err = np.abs(yerrl)
+	else:
+		yerrh = np.abs(yerrh)
+		err = [yerrl,yerrh]
+
+	if new_x is None :
+		new_x = x
+
+	p = PlotMarginalModes(a)
+	c = a.get_stats()['modes'][0]
+	mean = np.array(c['mean'])
+	sigma = np.array(c['sigma'])
+	maximum = np.array(c['maximum'])
+	dx = mean-maximum
+	sigmal = sigma-dx
+	sigmah = sigma+dx
+
+	new_y = function(new_x,maximum)
+
+	plt.figure()
+	plt.errorbar(x,y,yerr =err ,fmt = 'o',ecolor = 'k',capthick=2,color = 'k')
+	plt.errorbar(new_x, new_y, fmt = '--', color='r')
+	if(plot_weight):
+		for p_value in a.get_equal_weighted_posterior()[::100,:-1]:
+			#print(t0, a1, a2,f0)
+			plt.plot(new_x, function(new_x,p_value), '-', color='blue', alpha=0.2, label='data')
+	if xlog:
+		plt.xscale('log')
+	if ylog:
+		plt.yscale('log')
+	if xlabel is not None:
+		plt.xlabel(xlabel)
+	if ylabel is not None:
+		plt.ylabel(ylabel)
+	if xlim is not None:
+		plt.xlim(xlim)
+	if ylim is not None:
+		plt.ylim(ylim)
+	if savedir is not None:
+		plt.savefig(savedir + 'Z_spectrum_posterior.png')
+	else:
+		plt.savefig('Z_spectrum_posterior.png')
+	plt.close()
+
+	plt.figure(figsize=(5*n_params,5*n_params))
+	for i in range(n_params):
+		for j in range(i,n_params):
+			if(i == 0):
+				plt.subplot(n_params, n_params,i*n_params+j+1)
+				plt.title(parameters[j],size = 30)
+				plt.tick_params(labelsize = 15)
+				p.plot_marginal(j, with_ellipses = True, with_points = False, grid_points=50)
+				plt.errorbar(maximum[j],0,xerr=[[sigmal[j]],[sigmah[j]]],fmt = 'o',ecolor = 'r',capthick=2,color = 'r')
+				if(j == 0):
+					plt.ylabel("Probability",size = 30)
+					plt.xlabel(parameters[j],size = 30)
+				#plt.tight_layout()
+			else:
+				plt.subplot(n_params, n_params,i*n_params+j+1)
+				plt.tick_params(labelsize = 15)
+				p.plot_conditional(j, i-1, with_ellipses = False, with_points = False, grid_points=30)
+				plt.errorbar(maximum[j], maximum[i-1], xerr=[[sigmal[j]],[sigmah[j]]], yerr=[[sigmal[i-1]],[sigmah[i-1]]], fmt='o', ecolor='r', capthick=2, color='r')
+				if(j == i):
+					plt.xlabel(parameters[j],size = 30)
+					plt.ylabel(parameters[i-1],size = 30)
+				#plt.tight_layout()
+	if savedir is not None:
+		plt.savefig(savedir + 'Z_marginals_multinest.png')
+	else:
+		plt.savefig('Z_marginals_multinest.png')
+	plt.close()
+
+
 
 
 
