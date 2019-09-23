@@ -5,7 +5,8 @@ import matplotlib.pyplot as plt
 def xspec_fit_kernel(filelist,datadir,savedir):
 	os.chdir(datadir)
 	alldatastr = ' '.join(filelist)
-	AllData.clean()
+	AllData.clear()
+	AllModels.clear()
 	AllData(alldatastr)
 	AllData.show()
 	AllData.ignore('1:**-200.0,40000.0-** 2-3:**-8.0,800.0-**')
@@ -22,7 +23,7 @@ def xspec_fit_kernel(filelist,datadir,savedir):
 	value_arr1,value_arr2,ffff = par3.error
 	Plot('eeufspec')
 	flux_list = []
-	for i in range(len(brightdet)):
+	for i in range(len(filelist)):
 		print(i)
 		flux = AllData(i+1).flux
 		flux_list.append(flux)
