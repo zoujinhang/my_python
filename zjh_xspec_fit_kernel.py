@@ -1,7 +1,7 @@
 from xspec import *
 import os
 import matplotlib.pyplot as plt
-
+import numpy as np
 def xspec_fit_kernel(filelist,datadir,savedir):
 	os.chdir(datadir)
 	alldatastr = ' '.join(filelist)
@@ -43,7 +43,7 @@ def xspec_fit_kernel(filelist,datadir,savedir):
 	plt.yscale('log')
 	plt.savefig(savedir + 'foldedspec.png')
 	plt.close()
-	return value,value_arr1,value_arr2,flux_list
+	return value,value_arr1,value_arr2,np.array(flux_list).T
 
 
 

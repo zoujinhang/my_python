@@ -63,7 +63,7 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 		total_rate[i] = (bin_rate[slice_index]).mean()
 		bkg_rate[i] = (bs[slice_index]).mean()
 		if(total_rate[i] < bkg_rate[i]):
-			bkg_rate[i] = total_rate[i] #限制背景刚度
+			bkg_rate[i] = total_rate[i]#-1e-999 #限制背景刚度
 
 		exposure = len(slice_index)*binsize
 		bkg_uncertainty[i] = np.sqrt(bkg_rate[i]/exposure)
