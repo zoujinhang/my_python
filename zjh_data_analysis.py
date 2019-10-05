@@ -20,6 +20,71 @@ robjects.r("library(baseline)")
 robjects.numpy2ri.activate()
 r("source('/home/laojin/software/my_r/zjh_r_remv_photo.R')")
 
+
+def trag(x,arg = 5):
+	'''
+	激活函数
+	:param x:
+	:param arg:
+	:return:
+	'''
+	arg = 5/arg
+	x = x*arg
+
+	return (np.exp(x)-np.exp(-x))/(np.exp(x)+np.exp(-x))
+
+
+def w_pp(w,arg = 9,f = 18):
+	'''
+	对权重进行操作
+	该过程合并了权重比较琐碎的区域。
+	:param w: 权重
+	:return: 权重
+	'''
+
+	num_w = w.size
+	ff = 0
+	ff1 =  0
+	first = True
+	rem_index = 0
+	rem_index2 = 0
+	rem_valu = 0
+	for i in range(num_w-1):
+		if(w[i] == w[i+1]):
+			ff = ff + 1
+			#valu = w[i]
+
+		else:
+			if first == False:
+				if(w[i] == 1):
+					F = (trag(ff,arg)-trag(ff1,arg))*f
+				else:
+					F = (trag(ff,arg)-trag(ff1,arg))*f
+				change_num = int(F)
+				if(change_num > 0):
+					if(rem_index-change_num<rem_index2):
+						nnn = rem_index2
+					else:
+						nnn = rem_index-change_num
+					change_index = np.arange(nnn,rem_index+1,1)
+					w[change_index] = w[i]
+
+				elif(change_num < 0):
+					if(rem_index-change_num>=i):
+						nnn = i+1
+					else:
+						nnn = rem_index-change_num+1
+
+					change_index = np.arange(rem_index,nnn,1)
+					w[change_index] = rem_valu
+
+			rem_index2 = rem_index
+			rem_index = i
+			rem_valu = w[i]
+			ff1 = ff
+			ff = 0
+			first = False
+	return w
 def get_all_energy(time,ch,ch_n,e1,e2):
 	new_t = np.array([])
 	new_energy = np.array([])
@@ -151,7 +216,7 @@ def r_baseline(time,rate,lam = None,hwi = None,it = None,inti = None):
 def WhittakerSmooth(x,w,lambda_):
 	X=np.matrix(x)#这里将数组转化为矩阵。矩阵之后就不可以用索引进行引用了。
 	m=X.size
-	i=np.arange(0,m)
+	#i=np.arange(0,m)
 	E=eye(m,format='csc')
 	D=E[1:]-E[:-1] # numpy.diff() does not work with sparse matrix. This is a workaround.
 	W=diags(w,0,shape=(m,m))
@@ -160,33 +225,127 @@ def WhittakerSmooth(x,w,lambda_):
 	background=spsolve(A,B)
 	return np.array(background)
 
+def rebine(x,merge):
+	merge = int(merge)
+	x = np.array(x)
+	cutoff = int(x.size/merge)*merge
+	x_a = x[:cutoff]
+
+	reshape_x = x_a.reshape(-1,merge)
+	reshape_x = reshape_x.mean(axis=1)
+
+	if (x.size % merge != 0):
+		x_b = x[cutoff:]
+		reshape_x = np.concatenate((reshape_x,[x_b.mean()]))
+	return reshape_x
+
 def my_airPLS(x,wind = 0.1,itermax =50,lambda_ = 100):
 	wind_ = 1-wind
 	n = x.size
 	m = x.shape[0]
 	w = np.ones(m)
-	z = WhittakerSmooth(x, w, lambda_)
-	d = np.abs(x - z)
+	x_f = WhittakerSmooth(x, w, 10)#数据初平滑
+	z = WhittakerSmooth(x_f, w, lambda_)
+	d = np.abs(x_f - z)
+	#d = x - z
+
 	for i in range(itermax):
 		z0 = z
 		index_ = np.argsort(d)[int(n*wind_):]
+		'''
+		print('index n:',len(index_))
+		w_sort = w[index_]
+		print('index1 n:',len(index_[w_sort!=0]))
+		index_ = index_[w_sort!=0]
+		n = len(index_)
+		index_ = index_[int(n*wind_):]
+		print('index2 n:',len(index_))
+		'''
 		w[index_] = 0
-		z = WhittakerSmooth(x, w, lambda_+20*i)
+		print('Len W !=0 :',len(w[w!=0]))
+		#w[d>0] = 0
+		print(i)
+		z = WhittakerSmooth(x_f, w, lambda_+10*i)
+		#z = WhittakerSmooth(x_f, w, lambda_)
+
 		d = np.abs(z0 - z)
+		#d = z0 - z
+		#xx = np.abs(np.mean(z)-np.mean(z0))
 		xx = np.sum((z-z0)**2/d.size)
 
-		if (xx<0.00001):
+		if (xx<0.01
+			or len(w[w!=0])/w.size <0.3
+		):
 			break
-	w = np.ones(m)
-	z = WhittakerSmooth(z, w, 200)
+	#w = np.ones(m)
+	#z = WhittakerSmooth(z, w, 500000)
+
 	return z
 
-def baseline(x,y,wind = 0.1,itermax = 50,lambda_ = 100):
+def baseline(x,y,wind = 0.1,itermax =50,lambda_ = 100):
 	x = np.array(x)
 	y = np.array(y)
-	z = my_airPLS(y,wind = wind,itermax = itermax,lambda_ = lambda_)
+	time_range = x[-1]-x[0]
+	bin_numb = x.size
+	mreg_n = np.ceil(bin_numb/time_range)
+	rebine_bin_c = rebine(x,mreg_n)
+	rebine_bin_n = rebine(y,mreg_n)
+	rez = my_airPLS(rebine_bin_n,wind = wind,itermax = itermax,lambda_ = lambda_)
+	rem_nbs = np.concatenate(([rez[0]],rez,[rez[-1]]))
+	rebin_c = np.concatenate(([x[0]],rebine_bin_c,[x[-1]]))
+	z = np.interp(x,rebin_c,rem_nbs)
 	return x,y-z,z
 
+def double_airPLS(x,hardness = 6):
+	m = x.shape[0]
+	w = np.ones(m)
+	#x_f = WhittakerSmooth(x, w, 4)#数据初平滑
+	x_f = x
+	bs = WhittakerSmooth(x_f,w,100)
+	cs = x_f - bs
+	#cs_f = x_f - bs
+	cs_mean = cs.mean()
+	cs_std = cs.std()
+	for i in range(40):
+		print(i)
+		cs_index = np.where((cs>cs_mean+(1+0.0*i)*cs_std)|(cs<cs_mean-(1+0.0*i)*cs_std))
+		cs1 = cs
+		w[cs_index] = 0
+		w = w_pp(w,arg = 5,f=9)
+		w = w_pp(w,arg = 20,f = 30)
+		#dssn = np.abs(cs[w != 0]).sum()
+		#w[w!=0] = np.exp(i*np.abs(cs[w!=0])/dssn)
+		print('w!=0',len(w[w!=0]))
+		bs = WhittakerSmooth(x_f,w,100)
+		cs = x_f - bs
+		#cs_f = x_f - bs
+		drti = ((cs1-cs)**2).mean()
+		print('drti:',drti)
+		if(drti <1):
+			break
+		cs_mean = cs[w!=0].mean()
+		cs_std = cs[w!=0].std()
+		#cs_std = (cs*w).std()
+	#w = np.ones(m)
+	#bs = WhittakerSmooth(bs,w,10**hardness) # 强滤波
+	return bs
+
+def WS_baseline(x,y,hardness = 6):
+	x = np.array(x)
+	y = np.array(y)
+	time_range = x[-1]-x[0]
+	bin_numb = x.size
+	mreg_n = np.ceil(bin_numb/time_range)
+	print('mreg_n:',mreg_n)
+	rebine_bin_c = rebine(x,mreg_n)
+	rebine_size = rebine_bin_c[1:]-rebine_bin_c[:-1]
+	print('rebin:',rebine_size)
+	rebine_bin_n = rebine(y,mreg_n)
+	rez = double_airPLS(rebine_bin_n,hardness=hardness)
+	rem_nbs = np.concatenate(([rez[0]],rez,[rez[-1]]))
+	rebin_c = np.concatenate(([x[0]],rebine_bin_c,[x[-1]]))
+	z = np.interp(x,rebin_c,rem_nbs)
+	return x,y-z,z
 
 def easy_histogram(time,binsize = 1.):
 
