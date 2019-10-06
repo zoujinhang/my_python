@@ -228,6 +228,7 @@ def WhittakerSmooth(x,w,lambda_):
 def rebine(x,merge):
 	merge = int(merge)
 	x = np.array(x)
+	x[np.isnan(x)] = 0 #无效数据清零。
 	cutoff = int(x.size/merge)*merge
 	x_a = x[:cutoff]
 
@@ -301,7 +302,17 @@ def double_airPLS(x,hardness = 6):
 	w = np.ones(m)
 	#x_f = WhittakerSmooth(x, w, 4)#数据初平滑
 	x_f = x
+	b_index = np.isnan(x_f)
+	if(True in b_index):
+		print('数据中存在无效值 Nan')
+		x_f[np.isnan(x_f)] = 0
+		w[np.isnan(x_f)] = 0
+
 	bs = WhittakerSmooth(x_f,w,100)
+	if(True in b_index):
+		print('Whittaker 平滑出现无效值')
+		bs[np.isnan(bs)] = 0
+
 	cs = x_f - bs
 	#cs_f = x_f - bs
 	cs_mean = cs.mean()
@@ -313,10 +324,15 @@ def double_airPLS(x,hardness = 6):
 		w[cs_index] = 0
 		w = w_pp(w,arg = 5,f=9)
 		w = w_pp(w,arg = 20,f = 30)
+		w[b_index] = 0
 		#dssn = np.abs(cs[w != 0]).sum()
 		#w[w!=0] = np.exp(i*np.abs(cs[w!=0])/dssn)
 		#print('w!=0',len(w[w!=0]))
 		bs = WhittakerSmooth(x_f,w,100)
+		if(True in np.isnan(bs)):
+			print('Whittaker 平滑出现无效值')
+			bs[np.isnan(bs)] = 0
+			w[np.isnan(bs)] = 0
 		cs = x_f - bs
 		#cs_f = x_f - bs
 		drti = ((cs1-cs)**2).mean()
