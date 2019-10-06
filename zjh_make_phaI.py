@@ -1,20 +1,34 @@
 from astropy.io import fits
 import numpy as np
 import os
-from zjh_data_analysis import r_baseline
+#from zjh_data_analysis import r_baseline
+from Separate_background.background_kernel import Baseline_in_time
+
 from glob import glob
 import matplotlib.pyplot as plt
 import shutil
 
 def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start = -100,time_stop=300):
+	'''
 
+	:param bn: 样本代号
+	:param ni: 探头
+	:param topdir: 数据所在目录
+	:param savedir: 产生数据存放目录
+	:param slice_start: 光谱切片起始时间
+	:param slice_stop: 光谱切片结束时间
+	:param binsize: 光变曲线切片大小
+	:param time_start: 总数据裁剪，开始时间
+	:param time_stop: 总数据裁剪，结束时间
+
+	'''
 	datalink = topdir+bn + '/'+'glg_tte_'+ni+'_' + bn + '_v*.fit'
 	datalink = glob(datalink)[0]
 	if(os.path.exists(savedir) == False):
 		os.makedirs(savedir)
 	rsp_link = topdir+bn+'/'+'glg_cspec_'+ni+'_'+bn+'_*.rsp'
 	rsp_link = glob(rsp_link)[0]
-	copy_rspI(rsp_link,savedir+'A_slice'+bn+'_'+ni+'.rsp')
+	copy_rspI(rsp_link,savedir+'A_'+bn+'_'+ni+'.rsp')
 	hdu = fits.open(datalink)
 	trigtime = hdu['Primary'].header['TRIGTIME']
 	data_ = hdu['EVENTS'].data
@@ -45,6 +59,7 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 	total_uncertainty = np.zeros(128)
 	bkg_uncertainty = np.zeros(128)
 
+	exposure = len(np.where((edges[:-1]>=slice_start) & (edges[:-1]<=slice_stop))[0][:-1])*binsize
 
 	for i in range(128):
 		t_ch = t[ch == i]
@@ -52,25 +67,25 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 
 		#bin_t = (bin_edges[1:]+bin_edges[:-1])*0.5          #获得单能道光变曲线
 		bin_t = bin_edges[:-1]                               #只要前边界
-		bin_rate = bin_n/binsize
+		#bin_rate = bin_n/binsize
 
-		t_r,cs,bs = r_baseline(bin_t,bin_n)                 #获得单能道背景
-
+		#t_r,cs,bs = r_baseline(bin_t,bin_n)                 #获得单能道背景
+		t_r,cs,bs = Baseline_in_time(bin_t,bin_n).get_value()
 		slice_index = np.where((bin_t>=slice_start) & (bin_t<=slice_stop))[0]
 		slice_index = slice_index[:-1]                      #排除掉最后一个可能不完整的bin
 		#print('slice index:\n',slice_index)
 		#print('bs:\n',bs[slice_index])
-		total_rate[i] = (bin_rate[slice_index]).mean()
-		bkg_rate[i] = (bs[slice_index]).mean()
-		if(total_rate[i] < bkg_rate[i]):
-			bkg_rate[i] = total_rate[i]#-1e-999 #限制背景刚度
+		total_rate[i] = (bin_n[slice_index]).sum()#.mean()
+		bkg_rate[i] = (bs[slice_index]).sum()#.mean()
+		if(total_rate[i] <= bkg_rate[i]):
+			bkg_rate[i] = total_rate[i] #限制背景高度
 
-		exposure = len(slice_index)*binsize
+		#exposure = len(slice_index)*binsize
 		bkg_uncertainty[i] = np.sqrt(bkg_rate[i]/exposure)
 		total_uncertainty[i] = np.sqrt(total_rate[i]/exposure)
 
-	write_phaI(total_rate,bn,ni,slice_start,slice_stop,savedir+'A_slice_'+bn+'_'+ni+'.pha')
-	write_phaI(bkg_rate,bn,ni,slice_start,slice_stop,savedir+'A_slice_'+bn+'_'+ni+'.bkg')
+	write_phaI(total_rate,bn,ni,slice_start,slice_stop,savedir+'A_'+bn+'_'+ni+'.pha', exposure)
+	write_phaI(bkg_rate,bn,ni,slice_start,slice_stop,savedir+'A_'+bn+'_'+ni+'.bkg',exposure)
 
 	x = np.sqrt(emin*emax)
 
@@ -86,11 +101,16 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 	plt.close()
 
 
-def write_phaI(spectrum_rate,bnname,detector,t1,t2,outfile):
+def write_phaI(spectrum_counts,bnname,detector,t1,t2,outfile,exposure):
 	'''
-	det:探头
-	t1:开始时间
-	t2:结束时间
+
+	:param spectrum_counts: 光谱计数
+	:param bnname: 样本代号
+	:param detector: 探头
+	:param t1: 光谱切片起始时间
+	:param t2: 光谱切片结束时间
+	:param outfile: 输出文件保存路径
+	:param exposure: 光谱曝光时间
 	'''
 	header0=fits.Header()#头文件基本信息设置
 	header0.append(('creator', 'Zou', 'The name who created this PHA file'))
@@ -103,19 +123,19 @@ def write_phaI(spectrum_rate,bnname,detector,t1,t2,outfile):
 
 	a1 = np.arange(128)
 	col1 = fits.Column(name='CHANNEL', format='1I', array=a1)                              #创建列
-	col2 = fits.Column(name='COUNTS', format='1D', unit='COUNTS', array=spectrum_rate)     #创建列
+	col2 = fits.Column(name='COUNTS', format='1D', unit='COUNTS', array=spectrum_counts)     #创建列
 	hdu1 = fits.BinTableHDU.from_columns([col1, col2])#创建一个bin列表
 	header=hdu1.header
 	header.append(('extname', 'SPECTRUM', 'Name of this binary table extension'))
 	header.append(('telescop', 'GLAST', 'Name of mission/satellite'))
 	header.append(('instrume', 'GBM', 'Specific instrument used for observation'))
 	header.append(('filter', 'None', 'The instrument filter in use (if any)'))
-	header.append(('exposure', 1., 'Integration time in seconds'))
+	header.append(('exposure', exposure, 'Integration time in seconds'))#这里设置曝光时间
 	header.append(('areascal', 1., 'Area scaling factor'))
 	header.append(('backscal', 1., 'Background scaling factor'))
 	if outfile[-3:]=='pha':
-		header.append(('backfile', 'A_slice_'+bnname+'_'+detector+'.bkg', 'Name of corresponding background file (if any)'))#这里有背景文件的名字
-		header.append(('respfile', 'A_slice'+bnname+'_'+detector+'.rsp', 'Name of corresponding RMF file (if any)'))#这里有响应文件的名字
+		header.append(('backfile', 'A_'+bnname+'_'+detector+'.bkg', 'Name of corresponding background file (if any)'))#这里有背景文件的名字
+		header.append(('respfile', 'A_'+bnname+'_'+detector+'.rsp', 'Name of corresponding RMF file (if any)'))#这里有响应文件的名字
 	else:
 		header.append(('backfile', 'none', 'Name of corresponding background file (if any)'))
 		header.append(('respfile', 'none', 'Name of corresponding RMF file (if any)'))
