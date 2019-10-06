@@ -307,7 +307,7 @@ def double_airPLS(x,hardness = 6):
 	cs_mean = cs.mean()
 	cs_std = cs.std()
 	for i in range(40):
-		print(i)
+		#print(i)
 		cs_index = np.where((cs>cs_mean+(1+0.0*i)*cs_std)|(cs<cs_mean-(1+0.0*i)*cs_std))
 		cs1 = cs
 		w[cs_index] = 0
@@ -315,14 +315,16 @@ def double_airPLS(x,hardness = 6):
 		w = w_pp(w,arg = 20,f = 30)
 		#dssn = np.abs(cs[w != 0]).sum()
 		#w[w!=0] = np.exp(i*np.abs(cs[w!=0])/dssn)
-		print('w!=0',len(w[w!=0]))
+		#print('w!=0',len(w[w!=0]))
 		bs = WhittakerSmooth(x_f,w,100)
 		cs = x_f - bs
 		#cs_f = x_f - bs
 		drti = ((cs1-cs)**2).mean()
-		print('drti:',drti)
-		if(drti <1):
+		#print('drti:',drti)
+		if(drti < 0.1):
 			break
+		if(len(w[w!=0])<m*0.1):
+			print('baseline 可能存在过拟合纤细，建议检查拟合结果')
 		cs_mean = cs[w!=0].mean()
 		cs_std = cs[w!=0].std()
 		#cs_std = (cs*w).std()
@@ -336,10 +338,10 @@ def WS_baseline(x,y,hardness = 6):
 	time_range = x[-1]-x[0]
 	bin_numb = x.size
 	mreg_n = np.ceil(bin_numb/time_range)
-	print('mreg_n:',mreg_n)
+	#print('mreg_n:',mreg_n)
 	rebine_bin_c = rebine(x,mreg_n)
 	rebine_size = rebine_bin_c[1:]-rebine_bin_c[:-1]
-	print('rebin:',rebine_size)
+	#print('rebin:',rebine_size)
 	rebine_bin_n = rebine(y,mreg_n)
 	rez = double_airPLS(rebine_bin_n,hardness=hardness)
 	rem_nbs = np.concatenate(([rez[0]],rez,[rez[-1]]))
