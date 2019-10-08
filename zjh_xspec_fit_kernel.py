@@ -42,7 +42,7 @@ def xspec_fit_kernel(filelist,datadir,savedir):
 	plt.xscale('log')
 	plt.yscale('log')
 	plt.savefig(savedir + 'foldedspec.png')
-	plt.close()
+	#plt.close()
 	return value,value_arr1,value_arr2,np.array(flux_list).T
 
 

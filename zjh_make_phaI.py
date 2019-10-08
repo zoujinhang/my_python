@@ -3,10 +3,87 @@ import numpy as np
 import os
 #from zjh_data_analysis import r_baseline
 from Separate_background.background_kernel import Baseline_in_time
-
+from Separate_background import Separate_background
 from glob import glob
 import matplotlib.pyplot as plt
 import shutil
+
+def make_phaI_with_events(bn,ni,topdir,savedir,slice_start,slice_stop,time_start = -100,time_stop = 300):
+	'''
+
+	:param bn:
+	:param ni:
+	:param topdir:
+	:param savedir:
+	:param slice_start:
+	:param slice_stop:
+	:param time_start:
+	:param time_stop:
+	:return:
+	'''
+
+	datalink = topdir + bn + '/' + 'glg_tte_' + ni + '_' + bn + '_v*.fit'
+	datalink = glob(datalink)[0]
+	if (os.path.exists(savedir) == False):
+		os.makedirs(savedir)
+	rsp_link = topdir + bn + '/' + 'glg_cspec_' + ni + '_' + bn + '_*.rsp'
+	rsp_link = glob(rsp_link)[0]
+	copy_rspI(rsp_link, savedir + 'A_' + bn + '_' + ni + '.rsp')
+	hdu = fits.open(datalink)
+	trigtime = hdu['Primary'].header['TRIGTIME']
+	data_ = hdu['EVENTS'].data
+
+	t = data_.field(0) - trigtime
+	ch = data_.field(1)
+
+	ebound = hdu['EBOUNDS'].data
+
+	ch_n = ebound.field(0)
+	emin = ebound.field(1)
+	emax = ebound.field(2)
+
+	e_diff = emax - emin
+	total_count = np.zeros(128)
+	bkg_count = np.zeros(128)
+
+	total_uncertainty = np.zeros(128)
+	bkg_uncertainty = np.zeros(128)
+
+	events = Separate_background(t,ch,ch_n,time_range=[time_start,time_stop])
+	s = events.s
+	s_ch = events.s_ch
+	s_s_index = np.where((s>=slice_start)&(s<=slice_stop))[0]
+	#s = s[s_s_index]
+	s_ch = s_ch[s_s_index]
+
+	b = events.b
+	b_ch = events.b_ch
+	b_b_index = np.where((b >= slice_start) & (b <= slice_stop))[0]
+	#b = b[b_b_index]
+	b_ch = b_ch[b_b_index]
+	exposure = slice_stop-slice_start
+	for i in ch_n:
+		s_ch_index = np.where(s_ch == i)[0]
+		b_ch_index = np.where(b_ch == i)[0]
+		total_count[i] = (len(s_ch_index)+len(b_ch_index))/exposure#总光子数
+		bkg_count[i] = len(b_ch_index)/exposure#背景光子数
+		bkg_uncertainty[i] = np.sqrt(bkg_count[i] / exposure)
+		total_uncertainty[i] = np.sqrt(total_count[i] / exposure)
+	write_phaI(total_count, bn, ni, slice_start, slice_stop, savedir + 'A_' + bn + '_' + ni + '.pha', 1)
+	write_phaI(bkg_count, bn, ni, slice_start, slice_stop, savedir + 'A_' + bn + '_' + ni + '.bkg', 1)
+	x = np.sqrt(emin * emax)
+	plt.figure(figsize=(10, 10))
+	plt.subplot(1, 1, 1)
+	plt.errorbar(x, bkg_count / e_diff, yerr=bkg_uncertainty / e_diff, color='blue')
+	plt.errorbar(x, total_count / e_diff, yerr=total_uncertainty / e_diff, color='r')
+	plt.xlabel('energy KeV')
+	plt.ylabel('counts /N')
+	plt.xscale('log')
+	plt.yscale('log')
+	plt.savefig(savedir + 'Z_slic_' + bn + '_' + ni + '.png')
+	#plt.close()
+
+
 
 def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start = -100,time_stop=300):
 	'''
@@ -22,6 +99,7 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 	:param time_stop: 总数据裁剪，结束时间
 
 	'''
+
 	datalink = topdir+bn + '/'+'glg_tte_'+ni+'_' + bn + '_v*.fit'
 	datalink = glob(datalink)[0]
 	if(os.path.exists(savedir) == False):
@@ -75,8 +153,8 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 		slice_index = slice_index[:-1]                      #排除掉最后一个可能不完整的bin
 		#print('slice index:\n',slice_index)
 		#print('bs:\n',bs[slice_index])
-		total_rate[i] = (bin_n[slice_index]).sum()#.mean()
-		bkg_rate[i] = (bs[slice_index]).sum()#.mean()
+		total_rate[i] = (bin_n[slice_index]).mean()
+		bkg_rate[i] = (bs[slice_index]).mean()
 		if(total_rate[i] <= bkg_rate[i]):
 			bkg_rate[i] = total_rate[i] #限制背景高度
 
@@ -84,8 +162,8 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 		bkg_uncertainty[i] = np.sqrt(bkg_rate[i]/exposure)
 		total_uncertainty[i] = np.sqrt(total_rate[i]/exposure)
 
-	write_phaI(total_rate,bn,ni,slice_start,slice_stop,savedir+'A_'+bn+'_'+ni+'.pha', exposure)
-	write_phaI(bkg_rate,bn,ni,slice_start,slice_stop,savedir+'A_'+bn+'_'+ni+'.bkg',exposure)
+	write_phaI(total_rate,bn,ni,slice_start,slice_stop,savedir+'A_'+bn+'_'+ni+'.pha', 1)
+	write_phaI(bkg_rate,bn,ni,slice_start,slice_stop,savedir+'A_'+bn+'_'+ni+'.bkg',1)
 
 	x = np.sqrt(emin*emax)
 
@@ -98,7 +176,7 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 	plt.xscale('log')
 	plt.yscale('log')
 	plt.savefig(savedir+'Z_slic_'+bn+'_'+ni+'.png')
-	plt.close()
+	#plt.close()
 
 
 def write_phaI(spectrum_counts,bnname,detector,t1,t2,outfile,exposure):
