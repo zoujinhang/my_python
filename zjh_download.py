@@ -11,7 +11,7 @@ def download_all_in_one_path(targetdir,resultdir,check = True,num = 50):
 	ftp.prot_p()
 	ftp.cwd(targetdir)
 	files = ftp.nlst()
-	target = 'ftp://legacy.gsfc.nasa.gov' + targetdir
+	target = 'https://heasarc.gsfc.nasa.gov/FTP' + targetdir
 	c = None
 	if(check):
 		c = []
@@ -19,8 +19,9 @@ def download_all_in_one_path(targetdir,resultdir,check = True,num = 50):
 	ftp.voidcmd('TYPE I')
 	print('正在获取校验信息........')
 	for i in files:
-		print(i)
+		#print(i)
 		data = os.path.join(target,i)
+		print(data)
 		data1.append(data)
 		if(check):
 			c.append(ftp.size(i))
@@ -63,11 +64,19 @@ def down(targlist,resultdir,check = None,threadnum = 50):
 								break
 				if (nn):
 					kkk = check[index]
-					print(kkk)
-					en.append([i,kkk])
+					en.append([i,kkk,resultdir])
 		targlist = en
+	else:
+		en = []
+		for index,i in enumerate(targlist):
+			kkk = check[index]
+			en.append([i,kkk,resultdir])
+		targlist = en
+	print(targlist)
 	pool = Pool(threadnum)
 	pool.map(download,targlist)
+	pool.close()
+	pool.join()
 	print('目标下需要载数：',targnumber)
 	print('重复目标数：',targnumber-len(targlist))
 	print('实际下需要载数：',len(targlist))
@@ -76,8 +85,10 @@ def down(targlist,resultdir,check = None,threadnum = 50):
 def download(target1):
 	target = target1[0]
 	check = target1[1]
+	local = target1[2]
 	filename = os.path.split(target)[1]
-	t_link = 'wget --quiet --show-progress --read-timeout=5 --tries=0 '+target
+	t_link = 'wget --quiet --show-progress --read-timeout=5 --tries=0 -P '+local + ' '+target
+	#print(t_link)
 	os.system(t_link)
 	if(os.path.exists(filename) == False):
 		print('\n' + filename + ' 下载失败，即将重新下载！')
