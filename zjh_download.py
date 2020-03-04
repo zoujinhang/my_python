@@ -1,5 +1,5 @@
 import os
-from ftplib import FTP
+from ftplib import FTP_TLS as FTP
 from multiprocessing import Pool
 
 
