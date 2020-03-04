@@ -137,7 +137,7 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 	total_uncertainty = np.zeros(128)
 	bkg_uncertainty = np.zeros(128)
 
-	exposure = len(np.where((edges[:-1]>=slice_start) & (edges[:-1]<=slice_stop))[0][:-1])*binsize
+	#exposure = len(np.where((edges[:-1]>=slice_start) & (edges[:-1]<=slice_stop))[0][:-1])*binsize
 
 	for i in range(128):
 		t_ch = t[ch == i]
@@ -158,10 +158,11 @@ def make_phaI(bn,ni,topdir,savedir,slice_start,slice_stop,binsize = 1,time_start
 		if(total_rate[i] <= bkg_rate[i]):
 			bkg_rate[i] = total_rate[i] #限制背景高度
 
-		#exposure = len(slice_index)*binsize
+		exposure = len(slice_index)*binsize
 		bkg_uncertainty[i] = np.sqrt(bkg_rate[i]/exposure)
 		total_uncertainty[i] = np.sqrt(total_rate[i]/exposure)
-
+	if(True in np.isnan(bkg_uncertainty)):
+		print('背景中存在无效值！')
 	write_phaI(total_rate,bn,ni,slice_start,slice_stop,savedir+'A_'+bn+'_'+ni+'.pha', 1)
 	write_phaI(bkg_rate,bn,ni,slice_start,slice_stop,savedir+'A_'+bn+'_'+ni+'.bkg',1)
 

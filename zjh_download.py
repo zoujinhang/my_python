@@ -8,12 +8,13 @@ def download_all_in_one_path(targetdir,resultdir,check = True,num = 50):
 		os.makedirs(resultdir)
 	ftp = FTP('129.164.179.23')
 	ftp.login()
+	ftp.prot_p()
 	ftp.cwd(targetdir)
 	files = ftp.nlst()
-	target = 'https://heasarc.gsfc.nasa.gov/FTP' + targetdir
+	target = 'ftp://legacy.gsfc.nasa.gov' + targetdir
 	c = None
 	if(check):
-		c = {}
+		c = []
 	data1 = []
 	ftp.voidcmd('TYPE I')
 	print('正在获取校验信息........')
@@ -22,7 +23,7 @@ def download_all_in_one_path(targetdir,resultdir,check = True,num = 50):
 		data = os.path.join(target,i)
 		data1.append(data)
 		if(check):
-			c[i] = ftp.size(i)
+			c.append(ftp.size(i))
 	ftp.quit()
 	if(check == False):
 		print('忽略数据大小校验。')
@@ -45,7 +46,7 @@ def down(targlist,resultdir,check = None,threadnum = 50):
 				eee.append(i)
 		if (len(eee) != 0):
 			en = []
-			for i in targlist:
+			for index,i in enumerate(targlist):
 				nn = True
 				for j in eee:
 					if (os.path.split(i)[1] == j):
@@ -54,14 +55,16 @@ def down(targlist,resultdir,check = None,threadnum = 50):
 							break
 						else:
 							myfilesize = os.path.getsize(j)
-							if (myfilesize >= check[os.path.split(i)[1]]):
+							if (myfilesize >= check[index]):
 								nn = False
 								break
 							else:
 								os.system('rm '+j)
 								break
 				if (nn):
-					en.append(i)
+					kkk = check[index]
+					print(kkk)
+					en.append([i,kkk])
 		targlist = en
 	pool = Pool(threadnum)
 	pool.map(download,targlist)
@@ -70,13 +73,25 @@ def down(targlist,resultdir,check = None,threadnum = 50):
 	print('实际下需要载数：',len(targlist))
 
 
-def download(target):
+def download(target1):
+	target = target1[0]
+	check = target1[1]
+	filename = os.path.split(target)[1]
 	t_link = 'wget --quiet --show-progress --read-timeout=5 --tries=0 '+target
 	os.system(t_link)
+	if(os.path.exists(filename) == False):
+		print('\n' + filename + ' 下载失败，即将重新下载！')
+		download(target1)
+	else:
+		myfilesize = os.path.getsize(filename)
+		if(myfilesize < check):
+			print('\n'+filename + '未通过校验，即将重新下载！！')
+			os.system('rm '+filename)
+			download(target1)
 
-#targetdir = '/fermi/data/gbm/bursts/2018/bn180906759/current/'
-#resultdir = '/home/laojin/my_work/data/bn180906759/'
-#download_all_in_one_path(targetdir,resultdir)
+#targetdir = '/fermi/data/gbm/daily/2017/02/08/current/'
+#resultdir = '/home/laojin/gbm_daily_database/2017/02/08/'
+#download_all_in_one_path(targetdir,resultdir,num = 10)
 
 
 
