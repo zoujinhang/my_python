@@ -65,7 +65,13 @@ def down(targlist,resultdir,check = None,threadnum = 50):
 				if (nn):
 					kkk = check[index]
 					en.append([i,kkk,resultdir])
-		targlist = en
+			targlist = en
+		else:
+			en = []
+			for index,i in enumerate(targlist):
+				kkk = check[index]
+				en.append([i,kkk,resultdir])
+			targlist = en
 	else:
 		en = []
 		for index,i in enumerate(targlist):
